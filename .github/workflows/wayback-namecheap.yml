@@ -2,17 +2,67 @@ name: Wayback capture (Namecheap promo)
 
 on:
   schedule:
-    # Runs every 3 days.
-    # IMPORTANT: GitHub cron uses UTC time.
-    - cron: "0 10 */3 * *"
+    - cron: "0 10 */3 * *" # every 3 days at 10:00 UTC
   workflow_dispatch:
 
 jobs:
   capture:
     runs-on: ubuntu-latest
     steps:
-      - name: Save page to Wayback (Save Page Now)
+      - name: Attempt Wayback save
+        id: wayback
+        shell: bash
         run: |
-          curl -sS -L \
-            -H "User-Agent: wayback-capture/1.0" \
-            "https://web.archive.org/save/https://www.namecheap.com/promos/make-more-online-for-less/"
+          set -euo pipefail
+
+          URL="https://www.namecheap.com/promos/make-more-online-for-less/"
+          SAVE_URL="https://web.archive.org/save/$URL"
+
+          echo "Saving: $URL"
+          echo "Save endpoint: $SAVE_URL"
+
+          # Get HTTP status and also keep headers (Wayback sometimes returns snapshot path there)
+          headers="$(mktemp)"
+          STATUS="$(curl -sS -L -D "$headers" -o /dev/null -w "%{http_code}" \
+            -H "User-Agent: wayback-capture-github-action/1.0" \
+            "$SAVE_URL")"
+
+          echo "HTTP status: $STATUS"
+          echo "STATUS=$STATUS" >> "$GITHUB_ENV"
+
+          # Try to extract an archived URL from headers when available
+          archived_path="$(grep -i '^content-location:' "$headers" | tail -n 1 | awk '{print $2}' | tr -d '\r')"
+          if [[ -n "$archived_path" ]]; then
+            ARCHIVED_URL="https://web.archive.org${archived_path}"
+            echo "ARCHIVED_URL=$ARCHIVED_URL" >> "$GITHUB_ENV"
+            echo "Archived URL: $ARCHIVED_URL"
+          else
+            echo "No Content-Location header returned."
+          fi
+
+          # Decide success/failure
+          # 200/302 are the most common "OK" outcomes for Save Page Now flows
+          if [[ "$STATUS" == "200" || "$STATUS" == "302" ]]; then
+            echo "Capture succeeded."
+          else
+            echo "Capture failed."
+            exit 1
+          fi
+
+      - name: Run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Wayback capture"
+            echo ""
+            echo "- Page: https://www.namecheap.com/promos/make-more-online-for-less/"
+            echo "- Save endpoint: https://web.archive.org/save/https://www.namecheap.com/promos/make-more-online-for-less/"
+            echo "- HTTP status: ${STATUS:-unknown}"
+            if [[ -n "${ARCHIVED_URL:-}" ]]; then
+              echo "- Archived URL: ${ARCHIVED_URL}"
+            else
+              echo "- Archived URL: (not returned)"
+            fi
+            echo "- Run time (UTC): $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          } >> "$GITHUB_STEP_SUMMARY"
