@@ -15,6 +15,19 @@ const outDir = path.join("public", ts);
 
 fs.mkdirSync(outDir, { recursive: true });
 
+function looksLikeChallenge(html) {
+  return /cloudflare|cf-chl|challenge|turnstile/i.test(html);
+}
+
+function safeSlug(input) {
+  return String(input || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 60);
+}
+
 const browser = await chromium.launch({ headless: true });
 
 // Browser-like context (helps with Cloudflare)
@@ -27,10 +40,6 @@ const context = await browser.newContext({
 
 const page = await context.newPage();
 page.setDefaultNavigationTimeout(90_000);
-
-function looksLikeChallenge(html) {
-  return /cloudflare|cf-chl|challenge|turnstile/i.test(html);
-}
 
 async function attemptLoad(maxAttempts = 3) {
   let lastErr = null;
@@ -58,14 +67,7 @@ async function attemptLoad(maxAttempts = 3) {
   throw lastErr;
 }
 
-function safeSlug(input) {
-  return String(input || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-z0-9_-]/g, "")
-    .slice(0, 60);
-}
+let meta = null;
 
 try {
   const { status, html } = await attemptLoad(3);
@@ -84,4 +86,72 @@ try {
 
   // Save section screenshots
   const sectionsDir = path.join(outDir, "sections");
-  fs.mkdirSync(sectionsDir, { recursive
+  fs.mkdirSync(sectionsDir, { recursive: true });
+
+  // Strategy: screenshot each <section>.
+  // If the page doesn't use <section> meaningfully, change selector to match your layout.
+  const selector = "section";
+  const sectionHandles = await page.$$(selector);
+
+  let captured = 0;
+  let skipped = 0;
+
+  for (let i = 0; i < sectionHandles.length; i++) {
+    const handle = sectionHandles[i];
+
+    const box = await handle.boundingBox();
+    if (!box || box.height < 150 || box.width < 500) {
+      skipped += 1;
+      continue;
+    }
+
+    await handle.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(250);
+
+    const id = await handle.getAttribute("id");
+    const baseName = id ? safeSlug(id) : `section-${String(i + 1).padStart(2, "0")}`;
+
+    let headingText = "";
+    const heading = await handle.$("h2, h3");
+    if (heading) {
+      headingText = safeSlug(await heading.innerText());
+    }
+
+    const fileName =
+      headingText && headingText.length >= 3
+        ? `${String(i + 1).padStart(2, "0")}_${headingText}.png`
+        : `${String(i + 1).padStart(2, "0")}_${baseName}.png`;
+
+    try {
+      await handle.screenshot({
+        path: path.join(sectionsDir, fileName),
+      });
+      captured += 1;
+    } catch (e) {
+      console.log(`Section ${i + 1} screenshot failed: ${e.message}`);
+      skipped += 1;
+    }
+  }
+
+  meta = {
+    timestamp_utc: ts,
+    requested_url: url,
+    final_url: finalUrl,
+    http_status: status,
+    title,
+    sections: {
+      selector,
+      total_found: sectionHandles.length,
+      captured,
+      skipped,
+      output_dir: "sections/",
+    },
+  };
+
+  fs.writeFileSync(path.join(outDir, "meta.json"), JSON.stringify(meta, null, 2), "utf-8");
+
+  console.log("Snapshot saved:", outDir);
+  console.log(meta);
+} finally {
+  await browser.close();
+}
