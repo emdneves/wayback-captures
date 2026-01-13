@@ -1,3 +1,4 @@
+// scripts/snapshot.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
@@ -14,9 +15,13 @@ const outDir = path.join("public", ts);
 
 fs.mkdirSync(outDir, { recursive: true });
 
+function looksLikeChallenge(html) {
+  return /cloudflare|cf-chl|challenge|turnstile/i.test(html);
+}
+
 const browser = await chromium.launch({ headless: true });
 
-// Browser-like context (helps with CF)
+// Browser-like context (helps with Cloudflare)
 const context = await browser.newContext({
   userAgent:
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
@@ -26,10 +31,6 @@ const context = await browser.newContext({
 
 const page = await context.newPage();
 page.setDefaultNavigationTimeout(90_000);
-
-function looksLikeChallenge(html) {
-  return /cloudflare|cf-chl|challenge|turnstile/i.test(html);
-}
 
 async function attemptLoad(maxAttempts = 3) {
   let lastErr = null;
@@ -91,3 +92,4 @@ try {
   console.log(meta);
 } finally {
   await browser.close();
+}
