@@ -23,18 +23,20 @@ function slugifyTitle(title) {
     .slice(0, 80);
 }
 
-// Timestamp for ordering + uniqueness
+function utcStampForFolder(d) {
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}-${hh}-${mi}-${ss}`;
+}
+
 const now = new Date();
-const ts =
-  `${now.getUTCFullYear()}-` +
-  `${String(now.getUTCMonth() + 1).padStart(2, "0")}-` +
-  `${String(now.getUTCDate()).padStart(2, "0")}-` +
-  `${String(now.getUTCHours()).padStart(2, "0")}-` +
-  `${String(now.getUTCMinutes()).padStart(2, "0")}-` +
-  `${String(now.getUTCSeconds()).padStart(2, "0")}`;
+const ts = utcStampForFolder(now);
 
 const browser = await chromium.launch({ headless: true });
-
 const context = await browser.newContext({
   userAgent:
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
@@ -77,22 +79,19 @@ try {
   const title = await page.title();
   const finalUrl = page.url();
 
-  const titleSlug = slugifyTitle(title);
+  const titleSlug = slugifyTitle(title) || "untitled";
   const folderName = `${ts}--${titleSlug}`;
-  const outDir = path.join("public", folderName);
+  const outDir = path.join("captures", folderName);
 
   fs.mkdirSync(outDir, { recursive: true });
 
-  // Save rendered HTML
   fs.writeFileSync(path.join(outDir, "index.html"), html, "utf-8");
 
-  // Save full-page screenshot
   await page.screenshot({
     path: path.join(outDir, "screenshot.png"),
     fullPage: true,
   });
 
-  // Save metadata
   const meta = {
     timestamp_utc: now.toISOString(),
     requested_url: url,
@@ -102,11 +101,7 @@ try {
     folder: folderName,
   };
 
-  fs.writeFileSync(
-    path.join(outDir, "meta.json"),
-    JSON.stringify(meta, null, 2),
-    "utf-8"
-  );
+  fs.writeFileSync(path.join(outDir, "meta.json"), JSON.stringify(meta, null, 2), "utf-8");
 
   console.log("Snapshot saved:", outDir);
   console.log(meta);
