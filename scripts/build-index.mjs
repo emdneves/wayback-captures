@@ -1,28 +1,61 @@
+// scripts/build-index.mjs
 import fs from "node:fs";
 import path from "node:path";
 
-const base = "public";
-fs.mkdirSync(base, { recursive: true });
+const CAPTURES_DIR = "captures";
+const PUBLIC_DIR = "public";
 
-const entries = fs
-  .readdirSync(base, { withFileTypes: true })
-  .filter((d) => d.isDirectory())
-  .map((d) => d.name)
-  .sort()
-  .reverse();
+function ensureDir(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
+
+function rmDir(p) {
+  if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true });
+}
 
 function escapeHtml(s) {
-  return s
+  return String(s || "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
 
-const items = entries
+function copyDir(src, dst) {
+  ensureDir(dst);
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const from = path.join(src, entry.name);
+    const to = path.join(dst, entry.name);
+
+    if (entry.isDirectory()) copyDir(from, to);
+    else fs.copyFileSync(from, to);
+  }
+}
+
+// Rebuild public/ fresh every time
+rmDir(PUBLIC_DIR);
+ensureDir(PUBLIC_DIR);
+
+// If captures doesn't exist yet, create it so the script doesn't crash
+ensureDir(CAPTURES_DIR);
+
+// Copy captures into public
+const captureDirs = fs
+  .readdirSync(CAPTURES_DIR, { withFileTypes: true })
+  .filter((d) => d.isDirectory())
+  .map((d) => d.name)
+  .sort()
+  .reverse();
+
+for (const dir of captureDirs) {
+  copyDir(path.join(CAPTURES_DIR, dir), path.join(PUBLIC_DIR, dir));
+}
+
+// Build index.html
+const items = captureDirs
   .map((dir) => {
-    const metaPath = path.join(base, dir, "meta.json");
     let label = dir;
+    const metaPath = path.join(CAPTURES_DIR, dir, "meta.json");
 
     try {
       const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
@@ -31,10 +64,11 @@ const items = entries
       // ignore
     }
 
+    const safeDir = encodeURIComponent(dir);
     return `<li>
-      <a href="./${encodeURIComponent(dir)}/index.html">${escapeHtml(label)}</a>
-      <a href="./${encodeURIComponent(dir)}/screenshot.png">(png)</a>
-      <a href="./${encodeURIComponent(dir)}/meta.json">(meta)</a>
+      <a href="./${safeDir}/index.html">${escapeHtml(label)}</a>
+      <a href="./${safeDir}/screenshot.png">(png)</a>
+      <a href="./${safeDir}/meta.json">(meta)</a>
     </li>`;
   })
   .join("\n");
@@ -54,5 +88,6 @@ const html = `<!doctype html>
 </body>
 </html>`;
 
-fs.writeFileSync(path.join(base, "index.html"), html, "utf-8");
-console.log("Wrote public/index.html with", entries.length, "snapshots");
+fs.writeFileSync(path.join(PUBLIC_DIR, "index.html"), html, "utf-8");
+
+console.log(`Built ${PUBLIC_DIR}/index.html with ${captureDirs.length} snapshots`);
