@@ -1,3 +1,4 @@
+// scripts/snapshot.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
@@ -16,7 +17,7 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const browser = await chromium.launch({ headless: true });
 
-// Browser-like context (helps with CF)
+// Browser-like context (helps with Cloudflare)
 const context = await browser.newContext({
   userAgent:
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
@@ -57,6 +58,15 @@ async function attemptLoad(maxAttempts = 3) {
   throw lastErr;
 }
 
+function safeSlug(input) {
+  return String(input || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 60);
+}
+
 try {
   const { status, html } = await attemptLoad(3);
 
@@ -72,23 +82,6 @@ try {
     fullPage: true,
   });
 
-  // Save metadata
-  const meta = {
-    timestamp_utc: ts,
-    requested_url: url,
-    final_url: finalUrl,
-    http_status: status,
-    title,
-  };
-
-  fs.writeFileSync(
-    path.join(outDir, "meta.json"),
-    JSON.stringify(meta, null, 2),
-    "utf-8"
-  );
-
-  console.log("Snapshot saved:", outDir);
-  console.log(meta);
-} finally {
-  await browser.close();
-}
+  // Save section screenshots
+  const sectionsDir = path.join(outDir, "sections");
+  fs.mkdirSync(sectionsDir, { recursive
