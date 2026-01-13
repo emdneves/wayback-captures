@@ -9,19 +9,32 @@ if (!url) {
   process.exit(1);
 }
 
-// ISO timestamp safe for folder names
-const ts = new Date().toISOString().replaceAll(":", "-");
-const outDir = path.join("public", ts);
-
-fs.mkdirSync(outDir, { recursive: true });
-
 function looksLikeChallenge(html) {
   return /cloudflare|cf-chl|challenge|turnstile/i.test(html);
 }
 
+function slugifyTitle(title) {
+  return String(title || "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+}
+
+// Timestamp for ordering + uniqueness
+const now = new Date();
+const ts =
+  `${now.getUTCFullYear()}-` +
+  `${String(now.getUTCMonth() + 1).padStart(2, "0")}-` +
+  `${String(now.getUTCDate()).padStart(2, "0")}-` +
+  `${String(now.getUTCHours()).padStart(2, "0")}-` +
+  `${String(now.getUTCMinutes()).padStart(2, "0")}-` +
+  `${String(now.getUTCSeconds()).padStart(2, "0")}`;
+
 const browser = await chromium.launch({ headless: true });
 
-// Browser-like context (helps with Cloudflare)
 const context = await browser.newContext({
   userAgent:
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
@@ -42,7 +55,7 @@ async function attemptLoad(maxAttempts = 3) {
 
       const html = await page.content();
       if (looksLikeChallenge(html)) {
-        throw new Error("Cloudflare challenge detected in HTML");
+        throw new Error("Cloudflare challenge detected");
       }
 
       return { status, html };
@@ -64,6 +77,12 @@ try {
   const title = await page.title();
   const finalUrl = page.url();
 
+  const titleSlug = slugifyTitle(title);
+  const folderName = `${ts}--${titleSlug}`;
+  const outDir = path.join("public", folderName);
+
+  fs.mkdirSync(outDir, { recursive: true });
+
   // Save rendered HTML
   fs.writeFileSync(path.join(outDir, "index.html"), html, "utf-8");
 
@@ -75,11 +94,12 @@ try {
 
   // Save metadata
   const meta = {
-    timestamp_utc: ts,
+    timestamp_utc: now.toISOString(),
     requested_url: url,
     final_url: finalUrl,
     http_status: status,
     title,
+    folder: folderName,
   };
 
   fs.writeFileSync(
